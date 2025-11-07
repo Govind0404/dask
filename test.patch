@@ -37,7 +37,6 @@ index 0000000..1111111
 +
 
 diff --git a/tests/new/test_scaling_hints.py b/tests/new/test_scaling_hints.py
-diff --git a/tests/new/test_scaling_hints.py b/tests/new/test_scaling_hints.py
 new file mode 100644
 index 0000000..4444444
 --- /dev/null
