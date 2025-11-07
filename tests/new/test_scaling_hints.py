@@ -162,6 +162,8 @@ def test_hint_repartition_on_persistent_skew():
     out = compute_scaling_hint(metrics, cfg)
     assert out["action"] == "repartition"
     assert "reason" in out and isinstance(out["reason"], str)
+    # num_workers must be omitted for non add/remove actions
+    assert "num_workers" not in out
 
 
 def test_hint_none_when_all_within_thresholds():
@@ -190,6 +192,8 @@ def test_hint_none_when_all_within_thresholds():
     }
     out = compute_scaling_hint(metrics, cfg)
     assert out["action"] == "none"
+    # num_workers must be omitted for non add/remove actions
+    assert "num_workers" not in out
 
 
 def test_determinism_same_inputs_same_output():
@@ -218,6 +222,38 @@ def test_determinism_same_inputs_same_output():
     }
     out1 = compute_scaling_hint(metrics, cfg)
     out2 = compute_scaling_hint(metrics, cfg)
+    assert out1 == out2
+
+
+def test_unknown_metrics_ignored_deterministically():
+    compute_scaling_hint = _import_compute()
+    metrics = {
+        "task_backlog": 0,
+        "memory": {
+            "avg_used_pct": 0.10,
+            "per_worker_used_pct": {"w-1": 0.10, "w-2": 0.12},
+        },
+        "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
+        "skew": {"max_to_median_ratio": 1.1},
+    }
+    cfg = {
+        "distributed": {
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
+    }
+    out1 = compute_scaling_hint(metrics, cfg)
+    # Add unknown keys; output must remain identical
+    noisy_metrics = dict(metrics)
+    noisy_metrics["unknown"] = {"foo": 1, "bar": [1, 2, 3]}
+    out2 = compute_scaling_hint(noisy_metrics, cfg)
     assert out1 == out2
 
 
@@ -258,14 +294,14 @@ def test_module_get_scaling_hint_logging_and_frequency(caplog):
     before = len(caplog.records)
     out1 = get_scaling_hint(metrics, cfg)
     after1 = len(caplog.records)
-    assert isinstance(out1, dict) and "action" in out1
+    _assert_normalized_hint(out1)
     # Expect at least one log emission when autoscaler_hint is enabled
     assert after1 > before
 
     # Call again immediately; hint_frequency should rate-limit emissions
     out2 = get_scaling_hint(metrics, cfg)
     after2 = len(caplog.records)
-    assert isinstance(out2, dict) and "action" in out2
+    _assert_normalized_hint(out2)
     assert after2 == after1
 
 
