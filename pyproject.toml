@@ -44,6 +44,8 @@ dependencies = [
     # https://github.com/python/cpython/issues/99130
     # https://github.com/python/cpython/issues/98706
     "importlib_metadata >= 4.13.0; python_version < '3.12' ",
+    # Ensure distributed is installed deterministically via the lockfile
+    "distributed == 2025.11.0",
 ]
 dynamic = ["version"]
 
