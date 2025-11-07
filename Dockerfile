@@ -24,7 +24,7 @@ COPY . .
 
 # Install Python dependencies using uv (preinstalled in base image)
 # Use frozen resolution to ensure reproducible installs
-RUN uv sync --frozen
+RUN uv lock && uv sync --frozen
 
 # Start an interactive shell for development
 CMD ["/bin/bash"]
