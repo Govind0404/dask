@@ -23,8 +23,8 @@ ENV UV_PYTHON=3.12
 COPY . .
 
 # Install Python dependencies using uv (preinstalled in base image)
-# Use frozen resolution to ensure reproducible installs
-RUN uv lock && uv sync --frozen
+# Include optional extra 'distributed' needed by tests
+RUN uv lock --extra distributed && uv sync --frozen --extra distributed
 
 # Start an interactive shell for development
 CMD ["/bin/bash"]
