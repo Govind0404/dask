@@ -1,4 +1,5 @@
 import logging
+import inspect
 import pytest
 
 
@@ -24,6 +25,11 @@ def test_api_client_method_presence():
     assert hasattr(Client, "get_scaling_hint"), (
         "Client.get_scaling_hint() must be implemented as a public API."
     )
+    # Validate it is callable and takes 0 or 1 optional metrics parameter
+    sig = inspect.signature(getattr(Client, "get_scaling_hint"))
+    params = list(sig.parameters.values())
+    # Allow instance method (self) plus optional metrics
+    assert len(params) in (1, 2)
 
 
 def test_hint_add_workers_on_backlog_and_memory():
@@ -35,13 +41,17 @@ def test_hint_add_workers_on_backlog_and_memory():
         "skew": {"max_to_median_ratio": 1.2},
     }
     cfg = {
-        "hint_frequency": 60,
-        "thresholds": {
-            "memory_pct_high": 0.80,
-            "idle_pct_low": 0.10,
-            "task_backlog_high": 100,
-            "skew_ratio_high": 2.0,
-        },
+        "distributed": {
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
     }
     out = compute_scaling_hint(metrics, cfg)
     assert out["action"] == "add"
@@ -59,13 +69,17 @@ def test_hint_remove_workers_on_sustained_idle():
         "skew": {"max_to_median_ratio": 1.0},
     }
     cfg = {
-        "hint_frequency": 60,
-        "thresholds": {
-            "memory_pct_high": 0.80,
-            "idle_pct_low": 0.10,
-            "task_backlog_high": 100,
-            "skew_ratio_high": 2.0,
-        },
+        "distributed": {
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
     }
     out = compute_scaling_hint(metrics, cfg)
     assert out["action"] == "remove"
@@ -83,13 +97,17 @@ def test_hint_repartition_on_persistent_skew():
         "skew": {"max_to_median_ratio": 5.0},
     }
     cfg = {
-        "hint_frequency": 60,
-        "thresholds": {
-            "memory_pct_high": 0.80,
-            "idle_pct_low": 0.10,
-            "task_backlog_high": 100,
-            "skew_ratio_high": 2.0,
-        },
+        "distributed": {
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
     }
     out = compute_scaling_hint(metrics, cfg)
     assert out["action"] == "repartition"
@@ -105,13 +123,17 @@ def test_hint_none_when_all_within_thresholds():
         "skew": {"max_to_median_ratio": 1.1},
     }
     cfg = {
-        "hint_frequency": 60,
-        "thresholds": {
-            "memory_pct_high": 0.80,
-            "idle_pct_low": 0.10,
-            "task_backlog_high": 100,
-            "skew_ratio_high": 2.0,
-        },
+        "distributed": {
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
     }
     out = compute_scaling_hint(metrics, cfg)
     assert out["action"] == "none"
@@ -139,19 +161,29 @@ def test_determinism_same_inputs_same_output():
     assert out1 == out2
 
 
-def test_config_namespace_and_logging(caplog):
-    compute_scaling_hint = _import_compute()
+def test_module_get_scaling_hint_logging_and_frequency(caplog):
+    # Validate behavior at the API layer (module function), not inside the pure compute helper
+    try:
+        from distributed.scaling_hints import get_scaling_hint  # type: ignore
+    except Exception:
+        pytest.fail(
+            "Missing 'distributed.scaling_hints.get_scaling_hint(metrics, config)'."
+        )
+
     caplog.set_level(logging.INFO)
-    # Simulate config under the 'distributed' namespace
     cfg = {
-        "autoscaler_hint": True,
-        "hint_frequency": 60,
-        "thresholds": {
-            "memory_pct_high": 0.80,
-            "idle_pct_low": 0.10,
-            "task_backlog_high": 100,
-            "skew_ratio_high": 2.0,
-        },
+        "distributed": {
+            "autoscaler_hint": True,
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
     }
     metrics = {
         "task_backlog": 0,
@@ -159,12 +191,19 @@ def test_config_namespace_and_logging(caplog):
         "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
         "skew": {"max_to_median_ratio": 1.1},
     }
-    out = compute_scaling_hint(metrics, cfg)
-    assert out["action"] in {"none", "add", "remove", "repartition"}
-    # Expect some hint-related log emission when autoscaler_hint is True
-    assert any("Scaling hint" in (rec.getMessage() or "") for rec in caplog.records), (
-        "Expected a 'Scaling hint' log/dashboard emission when autoscaler_hint is enabled."
-    )
+
+    before = len(caplog.records)
+    out1 = get_scaling_hint(metrics, cfg)
+    after1 = len(caplog.records)
+    assert isinstance(out1, dict) and "action" in out1
+    # Expect at least one log emission when autoscaler_hint is enabled
+    assert after1 > before
+
+    # Call again immediately; hint_frequency should rate-limit emissions
+    out2 = get_scaling_hint(metrics, cfg)
+    after2 = len(caplog.records)
+    assert isinstance(out2, dict) and "action" in out2
+    assert after2 == after1
 
 
 def test_no_autoscaling_side_effects(monkeypatch):
@@ -190,14 +229,18 @@ def test_no_autoscaling_side_effects(monkeypatch):
         "skew": {"max_to_median_ratio": 1.0},
     }
     cfg = {
-        "autoscaler_hint": True,
-        "hint_frequency": 60,
-        "thresholds": {
-            "memory_pct_high": 0.80,
-            "idle_pct_low": 0.10,
-            "task_backlog_high": 100,
-            "skew_ratio_high": 2.0,
-        },
+        "distributed": {
+            "autoscaler_hint": True,
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
     }
     _ = compute_scaling_hint(metrics, cfg)
     assert called["scale"] is False
