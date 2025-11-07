@@ -22,6 +22,31 @@ Enable Dask users running on clusters/cloud to receive deterministic, human-read
   - Outputs are stable and fully deterministic.
 - Provide concise docs describing configuration keys and behavior.
 
+## Metrics Schema (explicit)
+
+The hint engine operates on a normalized metrics mapping. The following keys MUST be supported:
+
+- task_backlog: int – number of pending tasks.
+- memory: mapping
+  - avg_used_pct: float in [0, 1] – average memory utilization across workers.
+  - per_worker_used_pct: mapping[str, float in [0, 1]] – per-worker memory utilization.
+- idle: mapping
+  - idle_workers: int – number of idle workers.
+  - total_workers: int – total number of workers.
+  - idle_pct: float in [0, 1] – fraction of workers idle.
+- skew: mapping
+  - max_to_median_ratio: float – data/work skew ratio (higher -> more skew).
+
+The module MAY accept additional keys, but MUST be deterministic and ignore unknown keys.
+
+## Normalized Hint Dict (output)
+
+All hint-producing APIs MUST return a normalized mapping with the following shape:
+
+- action: one of {"add", "remove", "repartition", "none"}
+- reason: str – short human-readable explanation for the action.
+- num_workers: int – required only for actions "add" and "remove" (>= 1). Not required for "repartition" or "none".
+
 ## Test Assumptions (optional)
 
 - New public API: distributed.Client.get_scaling_hint(self, metrics: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]. This method delegates to the module-level function; logging and debouncing are handled in the module, not the Client method.

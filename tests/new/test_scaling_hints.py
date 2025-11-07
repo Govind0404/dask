@@ -6,6 +6,16 @@ import logging
 import pytest
 
 
+def _assert_normalized_hint(h: dict) -> None:
+    assert isinstance(h, dict), "hint must be a dict"
+    assert "action" in h and isinstance(h["action"], str)
+    assert h["action"] in {"add", "remove", "repartition", "none"}
+    assert "reason" in h and isinstance(h["reason"], str)
+    if h["action"] in {"add", "remove"}:
+        assert "num_workers" in h and isinstance(h["num_workers"], int)
+        assert h["num_workers"] >= 1
+
+
 def _import_compute():
     try:
         from distributed.scaling_hints import compute_scaling_hint
@@ -33,6 +43,34 @@ def test_api_client_method_presence():
     params = list(sig.parameters.values())
     # Allow instance method (self) plus optional metrics
     assert len(params) in (1, 2)
+
+
+def test_client_get_scaling_hint_delegates_and_returns_normalized(monkeypatch):
+    try:
+        from distributed import Client
+    except Exception:
+        pytest.skip("distributed.Client not available")
+
+    calls = {"count": 0, "last": None}
+
+    def fake_get_scaling_hint(metrics, config):  # type: ignore[override]
+        calls["count"] += 1
+        calls["last"] = {"metrics": metrics, "config": bool(config)}
+        # return a normalized hint
+        return {"action": "none", "reason": "test"}
+
+    # Ensure Client.get_scaling_hint delegates to module function
+    monkeypatch.setattr(
+        "distributed.scaling_hints.get_scaling_hint", fake_get_scaling_hint, raising=False
+    )
+
+    metrics = {"task_backlog": 0}
+    # Create an instance without initializing network resources
+    client = object.__new__(Client)
+    out = Client.get_scaling_hint(client, metrics)  # type: ignore[misc]
+    _assert_normalized_hint(out)
+    assert calls["count"] == 1
+    assert calls["last"]["metrics"] == metrics
 
 
 def test_hint_add_workers_on_backlog_and_memory():
