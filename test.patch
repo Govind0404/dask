@@ -10,7 +10,11 @@ index 0000000..1111111
 +case "${1:-}" in
 +  base)
 +    # Run a small, existing subset expected to pass at base commit
-+    pytest -q dask/tests/test_imports.py
++    if [ -f dask/tests/test_imports.py ]; then
++      pytest -q dask/tests/test_imports.py
++    else
++      echo "[base] dask/tests/test_imports.py not found; skipping base test run"
++    fi
 +    ;;
 +  new)
 +    # Run newly added tests that define the win condition (should fail at base)
@@ -179,13 +183,17 @@ index 0000000..4444444
 +        "skew": {"max_to_median_ratio": 1.2},
 +    }
 +    cfg = {
-+        "hint_frequency": 60,
-+        "thresholds": {
-+            "memory_pct_high": 0.80,
-+            "idle_pct_low": 0.10,
-+            "task_backlog_high": 100,
-+            "skew_ratio_high": 2.0,
-+        },
++        "distributed": {
++            "hint_frequency": 60,
++            "hints": {
++                "thresholds": {
++                    "memory_pct_high": 0.80,
++                    "idle_pct_low": 0.10,
++                    "task_backlog_high": 100,
++                    "skew_ratio_high": 2.0,
++                }
++            },
++        }
 +    }
 +    out1 = compute_scaling_hint(metrics, cfg)
 +    out2 = compute_scaling_hint(metrics, cfg)
@@ -273,5 +281,13 @@ index 0000000..4444444
 +            },
 +        }
 +    }
++    # Pure compute must not cause side effects
 +    _ = compute_scaling_hint(metrics, cfg)
++
++    # Module-level API must also not cause side effects
++    try:
++        from distributed.scaling_hints import get_scaling_hint  # type: ignore
++    except Exception:
++        pytest.fail("Missing 'distributed.scaling_hints.get_scaling_hint'.")
++    _ = get_scaling_hint(metrics, cfg)
 +    assert called["scale"] is False

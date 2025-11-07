@@ -24,11 +24,11 @@ Enable Dask users running on clusters/cloud to receive deterministic, human-read
 
 ## Test Assumptions (optional)
 
-- New public API: distributed.Client.get_scaling_hint(self, metrics: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]. This method may delegate to a module-level function and is responsible for any logging/debouncing.
+- New public API: distributed.Client.get_scaling_hint(self, metrics: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]. This method delegates to the module-level function; logging and debouncing are handled in the module, not the Client method.
 - Config keys are namespaced under "distributed":
   - distributed.autoscaler_hint (bool)
   - distributed.hint_frequency (int seconds)
   - distributed.hints.thresholds: memory_pct_high, idle_pct_low, task_backlog_high, skew_ratio_high
 - Module: distributed/scaling_hints.py provides:
   - compute_scaling_hint(metrics: Mapping[str, Any], config: Mapping[str, Any]) -> Dict[str, Any] (pure, no logging/side effects)
-  - get_scaling_hint(metrics: Mapping[str, Any], config: Mapping[str, Any]) -> Dict[str, Any] (handles logging/dashboard emission and hint_frequency gating)
+  - get_scaling_hint(metrics: Mapping[str, Any], config: Mapping[str, Any]) -> Dict[str, Any] (single source for logging/dashboard emission and hint_frequency gating)

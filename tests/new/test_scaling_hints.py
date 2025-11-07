@@ -148,13 +148,17 @@ def test_determinism_same_inputs_same_output():
         "skew": {"max_to_median_ratio": 1.2},
     }
     cfg = {
-        "hint_frequency": 60,
-        "thresholds": {
-            "memory_pct_high": 0.80,
-            "idle_pct_low": 0.10,
-            "task_backlog_high": 100,
-            "skew_ratio_high": 2.0,
-        },
+        "distributed": {
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
     }
     out1 = compute_scaling_hint(metrics, cfg)
     out2 = compute_scaling_hint(metrics, cfg)
@@ -242,5 +246,13 @@ def test_no_autoscaling_side_effects(monkeypatch):
             },
         }
     }
+    # Pure compute must not cause side effects
     _ = compute_scaling_hint(metrics, cfg)
+
+    # Module-level API must also not cause side effects
+    try:
+        from distributed.scaling_hints import get_scaling_hint  # type: ignore
+    except Exception:
+        pytest.fail("Missing 'distributed.scaling_hints.get_scaling_hint'.")
+    _ = get_scaling_hint(metrics, cfg)
     assert called["scale"] is False
