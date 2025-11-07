@@ -8,8 +8,5 @@ COPY . .
 # Use frozen resolution to ensure reproducible installs
 RUN uv sync --frozen
 
-# Ensure test runner script is executable in container environments
-RUN chmod +x test.sh || true
-
 # Start an interactive shell for development
 CMD ["/bin/bash"]
