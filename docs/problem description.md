@@ -16,9 +16,9 @@ Enable Dask users running on clusters/cloud to receive deterministic, human-read
 - When autoscaler_hint is enabled, emit a log/dashboard message whenever a new hint is computed.
 - Do not change scheduling behavior or scale resources automatically; provide guidance only.
 - Acceptance criteria:
-  - High backlog AND memory pressure → action "add" with a suggested worker count.
-  - Sustained high idle fraction → action "remove" with a suggested worker count.
-  - Persistent skew (one/few workers repeatedly overloaded) → action "repartition".
+  - High backlog AND memory pressure -> action "add" with a suggested worker count.
+  - Sustained high idle fraction -> action "remove" with a suggested worker count.
+  - Persistent skew (one/few workers repeatedly overloaded) -> action "repartition".
   - Outputs are stable and fully deterministic.
 - Provide concise docs describing configuration keys and behavior.
 
