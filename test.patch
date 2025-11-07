@@ -3,37 +3,37 @@ new file mode 100755
 index 0000000..0000001 100755
 --- /dev/null
 +++ b/test.sh
-@@ -0,0 +31 @@
-+#!/bin/bash
-+set -euo pipefail
-+
-+case "${1:-}" in
-+  base)
-+    # Run a small, existing subset expected to pass at base commit
-+    if [ -f dask/tests/test_imports.py ]; then
-+      pytest -q dask/tests/test_imports.py
-+    elif [ -d dask/tests ]; then
-+      # Fallback: run any "imports"-related tests to avoid zero-test runs
-+      pytest -q -k imports dask/tests
-+    else
-+      # Last-resort smoke test so base mode never runs zero checks
-+      python - <<'PY'
-+import importlib
-+for mod in ("dask",):
-+    importlib.import_module(mod)
-+print("SMOKE_OK")
-+PY
-+    fi
-+    ;;
-+  new)
-+    # Run newly added tests that define the win condition (should fail at base)
-+    pytest -q tests/new/test_scaling_hints.py
-+    ;;
-+  *)
-+    echo "Usage: ./test.sh {base|new}"
-+    exit 1
-+    ;;
-+esac
+@@ -0,0 +30 @@
+#!/bin/bash
+set -euo pipefail
+
+case "${1:-}" in
+  base)
+    # Run a small, existing subset expected to pass at base commit
+    if [ -f dask/tests/test_imports.py ]; then
+      pytest -q dask/tests/test_imports.py
+    elif [ -d dask/tests ]; then
+      # Fallback: run any "imports"-related tests to avoid zero-test runs
+      pytest -q -k imports dask/tests
+    else
+      # Last-resort smoke test so base mode never runs zero checks
+      python - <<'PY'
+import importlib
+for mod in ("dask",):
+    importlib.import_module(mod)
+print("SMOKE_OK")
+PY
+    fi
+    ;;
+  new)
+    # Run newly added tests that define the win condition (should fail at base)
+    pytest -q tests/new/test_scaling_hints.py
+    ;;
+  *)
+    echo "Usage: ./test.sh {base|new}"
+    exit 1
+    ;;
+esac
 
 
 diff --git a/tests/new/test_scaling_hints.py b/tests/new/test_scaling_hints.py
@@ -41,8 +41,365 @@ new file mode 100644
 index 0000000..0000002 100644
 --- /dev/null
 +++ b/tests/new/test_scaling_hints.py
-@@ -0,0 +285 @@
-+from __future__ import annotations
+@@ -0,0 +358 @@
+from __future__ import annotations
+
+import inspect
+import logging
+
+import pytest
+
+
+def _assert_normalized_hint(h: dict) -> None:
+    assert isinstance(h, dict), "hint must be a dict"
+    assert "action" in h and isinstance(h["action"], str)
+    assert h["action"] in {"add", "remove", "repartition", "none"}
+    assert "reason" in h and isinstance(h["reason"], str)
+    if h["action"] in {"add", "remove"}:
+        assert "num_workers" in h and isinstance(h["num_workers"], int)
+        assert h["num_workers"] >= 1
+
+
+def _import_compute():
+    try:
+        from distributed.scaling_hints import compute_scaling_hint
+    except Exception:
+        pytest.fail(
+            "Missing 'distributed.scaling_hints.compute_scaling_hint'. "
+            "Implement a pure function compute_scaling_hint(metrics, config) -> dict as specified."
+        )
+    return compute_scaling_hint
+
+
+def test_api_client_method_presence():
+    try:
+        from distributed import Client
+    except Exception:
+        pytest.fail(
+            "Missing public API: distributed.Client is unavailable; "
+            "expected Client.get_scaling_hint() method per problem spec."
+        )
+    assert hasattr(
+        Client, "get_scaling_hint"
+    ), "Client.get_scaling_hint() must be implemented as a public API."
+    # Validate it is callable and takes 0 or 1 optional metrics parameter
+    sig = inspect.signature(Client.get_scaling_hint)
+    params = list(sig.parameters.values())
+    # Allow instance method (self) plus optional metrics
+    assert len(params) in (1, 2)
+
+
+def test_client_get_scaling_hint_delegates_and_returns_normalized(monkeypatch):
+    try:
+        from distributed import Client
+    except Exception:
+        pytest.skip("distributed.Client not available")
+
+    calls = {"count": 0, "last": None}
+
+    def fake_get_scaling_hint(metrics, config):  # type: ignore[override]
+        calls["count"] += 1
+        calls["last"] = {"metrics": metrics, "config": bool(config)}
+        # return a normalized hint
+        return {"action": "none", "reason": "test"}
+
+    # Ensure Client.get_scaling_hint delegates to module function
+    monkeypatch.setattr(
+        "distributed.scaling_hints.get_scaling_hint", fake_get_scaling_hint, raising=False
+    )
+
+    metrics = {"task_backlog": 0}
+    # Create an instance without initializing network resources
+    client = object.__new__(Client)
+    out = Client.get_scaling_hint(client, metrics)  # type: ignore[misc]
+    _assert_normalized_hint(out)
+    assert calls["count"] == 1
+    assert calls["last"]["metrics"] == metrics
+
+
+def test_hint_add_workers_on_backlog_and_memory():
+    compute_scaling_hint = _import_compute()
+    metrics = {
+        "task_backlog": 200,
+        "memory": {
+            "avg_used_pct": 0.86,
+            "per_worker_used_pct": {"w-1": 0.90, "w-2": 0.82},
+        },
+        "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
+        "skew": {"max_to_median_ratio": 1.2},
+    }
+    cfg = {
+        "distributed": {
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
+    }
+    out = compute_scaling_hint(metrics, cfg)
+    assert out["action"] == "add"
+    assert isinstance(out.get("num_workers", 1), int)
+    assert out["num_workers"] >= 1
+    assert "reason" in out and isinstance(out["reason"], str)
+
+
+def test_hint_remove_workers_on_sustained_idle():
+    compute_scaling_hint = _import_compute()
+    metrics = {
+        "task_backlog": 0,
+        "memory": {
+            "avg_used_pct": 0.20,
+            "per_worker_used_pct": {"w-1": 0.2, "w-2": 0.2, "w-3": 0.2},
+        },
+        "idle": {"idle_workers": 3, "total_workers": 3, "idle_pct": 1.0},
+        "skew": {"max_to_median_ratio": 1.0},
+    }
+    cfg = {
+        "distributed": {
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
+    }
+    out = compute_scaling_hint(metrics, cfg)
+    assert out["action"] == "remove"
+    assert isinstance(out.get("num_workers", 1), int)
+    assert out["num_workers"] >= 1
+    assert "reason" in out and isinstance(out["reason"], str)
+
+
+def test_hint_repartition_on_persistent_skew():
+    compute_scaling_hint = _import_compute()
+    metrics = {
+        "task_backlog": 10,
+        "memory": {
+            "avg_used_pct": 0.50,
+            "per_worker_used_pct": {"w-1": 0.90, "w-2": 0.10},
+        },
+        "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
+        "skew": {"max_to_median_ratio": 5.0},
+    }
+    cfg = {
+        "distributed": {
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
+    }
+    out = compute_scaling_hint(metrics, cfg)
+    assert out["action"] == "repartition"
+    assert "reason" in out and isinstance(out["reason"], str)
+    # num_workers must be omitted for non add/remove actions
+    assert "num_workers" not in out
+
+
+def test_hint_none_when_all_within_thresholds():
+    compute_scaling_hint = _import_compute()
+    metrics = {
+        "task_backlog": 0,
+        "memory": {
+            "avg_used_pct": 0.10,
+            "per_worker_used_pct": {"w-1": 0.10, "w-2": 0.12},
+        },
+        "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
+        "skew": {"max_to_median_ratio": 1.1},
+    }
+    cfg = {
+        "distributed": {
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
+    }
+    out = compute_scaling_hint(metrics, cfg)
+    assert out["action"] == "none"
+    # num_workers must be omitted for non add/remove actions
+    assert "num_workers" not in out
+
+
+def test_determinism_same_inputs_same_output():
+    compute_scaling_hint = _import_compute()
+    metrics = {
+        "task_backlog": 200,
+        "memory": {
+            "avg_used_pct": 0.86,
+            "per_worker_used_pct": {"w-1": 0.90, "w-2": 0.82},
+        },
+        "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
+        "skew": {"max_to_median_ratio": 1.2},
+    }
+    cfg = {
+        "distributed": {
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
+    }
+    out1 = compute_scaling_hint(metrics, cfg)
+    out2 = compute_scaling_hint(metrics, cfg)
+    assert out1 == out2
+
+
+def test_unknown_metrics_ignored_deterministically():
+    compute_scaling_hint = _import_compute()
+    metrics = {
+        "task_backlog": 0,
+        "memory": {
+            "avg_used_pct": 0.10,
+            "per_worker_used_pct": {"w-1": 0.10, "w-2": 0.12},
+        },
+        "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
+        "skew": {"max_to_median_ratio": 1.1},
+    }
+    cfg = {
+        "distributed": {
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
+    }
+    out1 = compute_scaling_hint(metrics, cfg)
+    # Add unknown keys; output must remain identical
+    noisy_metrics = dict(metrics)
+    noisy_metrics["unknown"] = {"foo": 1, "bar": [1, 2, 3]}
+    out2 = compute_scaling_hint(noisy_metrics, cfg)
+    assert out1 == out2
+
+
+def test_module_get_scaling_hint_logging_and_frequency(caplog):
+    # Validate behavior at the API layer (module function), not inside the pure compute helper
+    try:
+        from distributed.scaling_hints import get_scaling_hint
+    except Exception:
+        pytest.fail(
+            "Missing 'distributed.scaling_hints.get_scaling_hint(metrics, config)'."
+        )
+
+    caplog.set_level(logging.INFO)
+    cfg = {
+        "distributed": {
+            "autoscaler_hint": True,
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
+    }
+    metrics = {
+        "task_backlog": 0,
+        "memory": {
+            "avg_used_pct": 0.10,
+            "per_worker_used_pct": {"w-1": 0.10, "w-2": 0.12},
+        },
+        "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
+        "skew": {"max_to_median_ratio": 1.1},
+    }
+
+    before = len(caplog.records)
+    out1 = get_scaling_hint(metrics, cfg)
+    after1 = len(caplog.records)
+    _assert_normalized_hint(out1)
+    # Expect at least one log emission when autoscaler_hint is enabled
+    assert after1 > before
+
+    # Call again immediately; hint_frequency should rate-limit emissions
+    out2 = get_scaling_hint(metrics, cfg)
+    after2 = len(caplog.records)
+    _assert_normalized_hint(out2)
+    assert after2 == after1
+
+
+def test_no_autoscaling_side_effects(monkeypatch):
+    compute_scaling_hint = _import_compute()
+    # Guard against accidental scaling side-effects by raising if scale is called
+    try:
+        from distributed import Client
+    except Exception:
+        pytest.fail(
+            "distributed.Client must be importable for side-effect protection test."
+        )
+
+    called = {"scale": False}
+
+    def fake_scale(*_a, **_k):
+        called["scale"] = True
+        raise AssertionError("Scaling must not be triggered by hint generation")
+
+    monkeypatch.setattr(Client, "scale", fake_scale, raising=False)
+
+    metrics = {
+        "task_backlog": 10,
+        "memory": {
+            "avg_used_pct": 0.50,
+            "per_worker_used_pct": {"w-1": 0.50, "w-2": 0.50},
+        },
+        "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
+        "skew": {"max_to_median_ratio": 1.0},
+    }
+    cfg = {
+        "distributed": {
+            "autoscaler_hint": True,
+            "hint_frequency": 60,
+            "hints": {
+                "thresholds": {
+                    "memory_pct_high": 0.80,
+                    "idle_pct_low": 0.10,
+                    "task_backlog_high": 100,
+                    "skew_ratio_high": 2.0,
+                }
+            },
+        }
+    }
+    # Pure compute must not cause side effects
+    _ = compute_scaling_hint(metrics, cfg)
+
+    # Module-level API must also not cause side effects
+    try:
+        from distributed.scaling_hints import get_scaling_hint
+    except Exception:
+        pytest.fail("Missing 'distributed.scaling_hints.get_scaling_hint'.")
+    _ = get_scaling_hint(metrics, cfg)
+    assert called["scale"] is False
 +
 +import inspect
 +import logging
