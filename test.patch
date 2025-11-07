@@ -1,9 +1,9 @@
 diff --git a/test.sh b/test.sh
 new file mode 100755
-index 0000000..1111111
+index 0000000..0000001 100755
 --- /dev/null
 +++ b/test.sh
-@@ -0,0 +1,31 @@
+@@ -0,0 +31 @@
 +#!/bin/bash
 +set -euo pipefail
 +
@@ -34,14 +34,14 @@ index 0000000..1111111
 +    exit 1
 +    ;;
 +esac
-+
+
 
 diff --git a/tests/new/test_scaling_hints.py b/tests/new/test_scaling_hints.py
 new file mode 100644
-index 0000000..2222222
+index 0000000..0000002 100644
 --- /dev/null
 +++ b/tests/new/test_scaling_hints.py
-@@ -0,0 +1,285 @@
+@@ -0,0 +285 @@
 +from __future__ import annotations
 +
 +import inspect
