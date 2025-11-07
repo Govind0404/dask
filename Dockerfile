@@ -23,8 +23,12 @@ ENV UV_PYTHON=3.12
 COPY . .
 
 # Install Python dependencies using uv (preinstalled in base image)
-# Include optional extra 'distributed' needed by tests
-RUN uv lock --extra distributed && uv sync --frozen --extra distributed
+# Perform a frozen sync from the project lock
+RUN uv lock && uv sync --frozen
+
+# Install distributed explicitly (tests require `distributed` runtime)
+# Pin to the version declared in extras to keep builds deterministic
+RUN uv pip install "distributed==2025.11.0"
 
 # Start an interactive shell for development
 CMD ["/bin/bash"]
