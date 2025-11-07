@@ -6,8 +6,17 @@ case "${1:-}" in
     # Run a small, existing subset expected to pass at base commit
     if [ -f dask/tests/test_imports.py ]; then
       pytest -q dask/tests/test_imports.py
+    elif [ -d dask/tests ]; then
+      # Fallback: run any "imports"-related tests to avoid zero-test runs
+      pytest -q -k imports dask/tests
     else
-      echo "[base] dask/tests/test_imports.py not found; skipping base test run"
+      # Last-resort smoke test so base mode never runs zero checks
+      python - <<'PY'
+import importlib
+for mod in ("dask",):
+    importlib.import_module(mod)
+print("SMOKE_OK")
+PY
     fi
     ;;
   new)
