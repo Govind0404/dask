@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import dask
-from dask.base import tokenize
 import dask.config as dc
+from dask.base import tokenize
 
 
 def test_config_context_manager_sets_and_restores():
@@ -16,3 +18,7 @@ def test_tokenize_is_deterministic_for_same_input():
     t1 = tokenize(data)
     t2 = tokenize(data)
     assert t1 == t2
+
+
+def test_dask_has_version_string():
+    assert isinstance(dask.__version__, str)

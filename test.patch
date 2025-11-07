@@ -42,10 +42,12 @@ new file mode 100644
 index 0000000..4444444
 --- /dev/null
 +++ b/tests/new/test_scaling_hints.py
-@@ -0,0 +1,16 @@
+@@ -0,0 +1,21 @@
++from __future__ import annotations
++
 +import dask
-+from dask.base import tokenize
 +import dask.config as dc
++from dask.base import tokenize
 +
 +
 +def test_config_context_manager_sets_and_restores():
@@ -61,3 +63,6 @@ index 0000000..4444444
 +    t1 = tokenize(data)
 +    t2 = tokenize(data)
 +    assert t1 == t2
++
++def test_dask_has_version_string():
++    assert isinstance(dask.__version__, str)
