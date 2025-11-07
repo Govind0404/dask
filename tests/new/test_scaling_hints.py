@@ -1,12 +1,15 @@
-import logging
+from __future__ import annotations
+
 import inspect
+import logging
+
 import pytest
 
 
 def _import_compute():
     try:
         from distributed.scaling_hints import compute_scaling_hint  # type: ignore
-    except Exception as e:  # pragma: no cover - fail clearly before feature exists
+    except Exception:  # pragma: no cover - fail clearly before feature exists
         pytest.fail(
             "Missing 'distributed.scaling_hints.compute_scaling_hint'. "
             "Implement a pure function compute_scaling_hint(metrics, config) -> dict as specified."
@@ -22,11 +25,11 @@ def test_api_client_method_presence():
             "Missing public API: distributed.Client is unavailable; "
             "expected Client.get_scaling_hint() method per problem spec."
         )
-    assert hasattr(Client, "get_scaling_hint"), (
-        "Client.get_scaling_hint() must be implemented as a public API."
-    )
+    assert hasattr(
+        Client, "get_scaling_hint"
+    ), "Client.get_scaling_hint() must be implemented as a public API."
     # Validate it is callable and takes 0 or 1 optional metrics parameter
-    sig = inspect.signature(getattr(Client, "get_scaling_hint"))
+    sig = inspect.signature(Client.get_scaling_hint)
     params = list(sig.parameters.values())
     # Allow instance method (self) plus optional metrics
     assert len(params) in (1, 2)
@@ -36,7 +39,10 @@ def test_hint_add_workers_on_backlog_and_memory():
     compute_scaling_hint = _import_compute()
     metrics = {
         "task_backlog": 200,
-        "memory": {"avg_used_pct": 0.86, "per_worker_used_pct": {"w-1": 0.90, "w-2": 0.82}},
+        "memory": {
+            "avg_used_pct": 0.86,
+            "per_worker_used_pct": {"w-1": 0.90, "w-2": 0.82},
+        },
         "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
         "skew": {"max_to_median_ratio": 1.2},
     }
@@ -64,7 +70,10 @@ def test_hint_remove_workers_on_sustained_idle():
     compute_scaling_hint = _import_compute()
     metrics = {
         "task_backlog": 0,
-        "memory": {"avg_used_pct": 0.20, "per_worker_used_pct": {"w-1": 0.2, "w-2": 0.2, "w-3": 0.2}},
+        "memory": {
+            "avg_used_pct": 0.20,
+            "per_worker_used_pct": {"w-1": 0.2, "w-2": 0.2, "w-3": 0.2},
+        },
         "idle": {"idle_workers": 3, "total_workers": 3, "idle_pct": 1.0},
         "skew": {"max_to_median_ratio": 1.0},
     }
@@ -92,7 +101,10 @@ def test_hint_repartition_on_persistent_skew():
     compute_scaling_hint = _import_compute()
     metrics = {
         "task_backlog": 10,
-        "memory": {"avg_used_pct": 0.50, "per_worker_used_pct": {"w-1": 0.90, "w-2": 0.10}},
+        "memory": {
+            "avg_used_pct": 0.50,
+            "per_worker_used_pct": {"w-1": 0.90, "w-2": 0.10},
+        },
         "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
         "skew": {"max_to_median_ratio": 5.0},
     }
@@ -118,7 +130,10 @@ def test_hint_none_when_all_within_thresholds():
     compute_scaling_hint = _import_compute()
     metrics = {
         "task_backlog": 0,
-        "memory": {"avg_used_pct": 0.10, "per_worker_used_pct": {"w-1": 0.10, "w-2": 0.12}},
+        "memory": {
+            "avg_used_pct": 0.10,
+            "per_worker_used_pct": {"w-1": 0.10, "w-2": 0.12},
+        },
         "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
         "skew": {"max_to_median_ratio": 1.1},
     }
@@ -143,7 +158,10 @@ def test_determinism_same_inputs_same_output():
     compute_scaling_hint = _import_compute()
     metrics = {
         "task_backlog": 200,
-        "memory": {"avg_used_pct": 0.86, "per_worker_used_pct": {"w-1": 0.90, "w-2": 0.82}},
+        "memory": {
+            "avg_used_pct": 0.86,
+            "per_worker_used_pct": {"w-1": 0.90, "w-2": 0.82},
+        },
         "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
         "skew": {"max_to_median_ratio": 1.2},
     }
@@ -191,7 +209,10 @@ def test_module_get_scaling_hint_logging_and_frequency(caplog):
     }
     metrics = {
         "task_backlog": 0,
-        "memory": {"avg_used_pct": 0.10, "per_worker_used_pct": {"w-1": 0.10, "w-2": 0.12}},
+        "memory": {
+            "avg_used_pct": 0.10,
+            "per_worker_used_pct": {"w-1": 0.10, "w-2": 0.12},
+        },
         "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
         "skew": {"max_to_median_ratio": 1.1},
     }
@@ -216,7 +237,9 @@ def test_no_autoscaling_side_effects(monkeypatch):
     try:
         from distributed import Client  # type: ignore
     except Exception:
-        pytest.fail("distributed.Client must be importable for side-effect protection test.")
+        pytest.fail(
+            "distributed.Client must be importable for side-effect protection test."
+        )
 
     called = {"scale": False}
 
@@ -228,7 +251,10 @@ def test_no_autoscaling_side_effects(monkeypatch):
 
     metrics = {
         "task_backlog": 10,
-        "memory": {"avg_used_pct": 0.50, "per_worker_used_pct": {"w-1": 0.50, "w-2": 0.50}},
+        "memory": {
+            "avg_used_pct": 0.50,
+            "per_worker_used_pct": {"w-1": 0.50, "w-2": 0.50},
+        },
         "idle": {"idle_workers": 0, "total_workers": 2, "idle_pct": 0.0},
         "skew": {"max_to_median_ratio": 1.0},
     }
